@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
 
-class ModelInterface():
+class ModelInterface:
     def __init__(self):
         pass
 
@@ -10,7 +10,7 @@ class ModelInterface():
         raise NotImplementedError
 
     @abstractmethod
-    def train(self, X,y):
+    def train(self, X, y):
         raise NotImplementedError
 
     @abstractmethod
@@ -20,7 +20,7 @@ class ModelInterface():
     @abstractmethod
     def save(self, path):
         raise NotImplementedError
-    
+
     @abstractmethod
     def load(self, path):
         raise NotImplementedError

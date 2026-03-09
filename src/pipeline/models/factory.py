@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 @dataclass
-class ModelFactory():
+class ModelFactory:
     raise NotImplementedError
