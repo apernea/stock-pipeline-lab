@@ -1,0 +1,45 @@
+[project]
+name = "stock-price-prediction-pipeline"
+version = "0.1.0"
+description = "Stock price prediction pipeline using Observer & Factory patterns, async data fetching, and SQLite/PostgreSQL storage."
+authors = [
+  { name = "Alex Pernea", email = "apernea31@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+  "pandas>=2.0",
+  "numpy>=1.26",
+  "scikit-learn>=1.4",
+  "sqlalchemy>=2.0",
+  "aiosqlite>=0.20",
+  "httpx[http2]>=0.27",
+  "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+postgres = [
+  "psycopg[binary]>=3.1",
+]
+dev = [
+  "pytest>=8.0",
+  "black>=24.0",
+  "ruff>=0.5",
+]
+
+[project.urls]
+homepage = "https://example.com"
+repository = "https://example.com/repo"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
