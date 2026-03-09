@@ -24,3 +24,7 @@ class ModelInterface():
     @abstractmethod
     def load(self, path):
         raise NotImplementedError
+
+    @abstractmethod
+    def summary(self):
+        raise NotImplementedError
