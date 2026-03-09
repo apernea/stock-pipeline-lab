@@ -19,7 +19,6 @@ lint:
 # Auto-format code
 format:
 	black src/ tests/
-	ruff check --fix src/ tests/
 
 # Run tests
 test:
