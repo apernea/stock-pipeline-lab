@@ -91,7 +91,7 @@ Planned layout (subject to refinement as we build):
 ```text
 design-pattern/
   README.md
-  requirements.txt/pyproject.toml   # Python dependencies (to be added)
+  pyproject.toml   # Python dependencies (to be added)
   Dockerfile                        # Container image definition (to be added)
   src/
     stock_pipeline/
