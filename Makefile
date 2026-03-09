@@ -33,10 +33,10 @@ clean:
 docker-build:
 	docker build -f .container/Dockerfile -t stock-pipeline .
 
-# Start pipeline + PostgreSQL
+# Start PostgreSQL
 docker-up:
-	docker compose up --build -d
+	docker compose -f .container/docker-compose.yml up -d
 
 # Stop all services
 docker-down:
-	docker compose down
+	docker compose -f .container/docker-compose.yml down

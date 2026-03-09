@@ -15,6 +15,7 @@ dependencies = [
   "scikit-learn>=1.4",
   "httpx[http2]>=0.27",
   "pydantic>=2.7",
+  "pydantic-settings>=2.0",
   "pyyaml>=6.0",
 ]
 
