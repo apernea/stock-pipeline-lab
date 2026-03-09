@@ -27,6 +27,7 @@ lstm = [
 ]
 dev = [
   "pytest>=8.0",
+  "pytest-asyncio>=0.24",
   "black>=24.0",
   "ruff>=0.5",
 ]
