@@ -2,6 +2,7 @@ from typing import TypeVar, Generic
 
 T = TypeVar("T")
 
+
 class Registry(Generic[T]):
     def __init__(self) -> None:
         self._entries: dict[str, type[T]] = {}

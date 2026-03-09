@@ -1,1 +1,8 @@
 .vscode/settings.json
+src/pipeline/test.py
+.env
+uv.lock
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

@@ -1,0 +1,10 @@
+CREATE TABLE STOCK_DATA(
+    symbol VARCHAR(10) NOT NULL,
+    date DATE NOT NULL,
+    open DOUBLE PRECISION,
+    high DOUBLE PRECISION,
+    low DOUBLE PRECISION,
+    close DOUBLE PRECISION,
+    volume BIGINT,
+    PRIMARY KEY (symbol, date)
+);
