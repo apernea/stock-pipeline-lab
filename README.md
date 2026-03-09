@@ -1,246 +1,227 @@
-Stock Price Prediction Pipeline
-================================
+# Stock Price Prediction Pipeline
 
-This project is a **stock price prediction pipeline** designed to teach and demonstrate:
+A **stock price prediction pipeline** that demonstrates:
 
-- **Observer pattern**: alert subscribers when predictions cross thresholds.
-- **Factory pattern**: easily swap between models (e.g. linear regression, random forest, LSTM).
-- **Async data fetching**: pull data from external APIs (e.g. Yahoo Finance / Alpha Vantage).
-- **Data pipeline**: fetch → preprocess → train → predict → store.
-- **Persistence**: store results in SQLite (default) or PostgreSQL.
-- **Containerization**: run the full pipeline inside Docker as a background service.
+- **Observer pattern** — alert subscribers when predictions cross thresholds.
+- **Factory pattern** — swap between models (linear regression, random forest, LSTM) via configuration.
+- **Async data fetching** — pull price data from Alpha Vantage using `httpx`.
+- **Data pipeline** — fetch → preprocess → train → predict → store.
+- **Persistence** — store results in PostgreSQL.
+- **Containerization** — run the full pipeline inside Docker as a scheduled background service.
 
-> Status: **Initial scaffold / skeleton** (core structure and patterns set up, logic mostly stubbed).
+> **Status:** Initial scaffold / skeleton — core structure and patterns set up, logic mostly stubbed.
 
 ---
 
 ## Project Goals
 
-- **Educational**:
-  - Understand how to design a small but realistic ML pipeline.
+- **Educational:**
+  - Design a small but realistic ML pipeline end-to-end.
   - Practice design patterns (Observer, Factory) in a real context.
-  - Learn how to structure a Python project that can grow over time.
-- **Operational**:
-  - Run the prediction loop in the **background** on a schedule.
-  - Package and run everything inside **Docker** with one command.
-  - Make it easy to later switch from **SQLite** to **PostgreSQL**.
+  - Structure a Python project that can grow over time.
+- **Operational:**
+  - Run the prediction loop on a **5-minute schedule** in the background.
+  - Package and run everything with **Docker Compose** (pipeline + PostgreSQL).
+  - Make it easy to add new models or alert channels without changing core logic.
 
 ---
 
 ## High-Level Architecture
 
-- **`async data fetcher`**:
-  - Uses `asyncio` + `aiohttp` (or library wrappers later) to fetch price data.
-  - Supports multiple data providers (e.g. Yahoo Finance, Alpha Vantage) behind a clean interface.
+```
+Alpha Vantage API
+       │
+       ▼
+  ┌──────────┐    ┌────────────────┐    ┌──────────────┐    ┌───────────┐
+  │  Fetcher  │───▶│ Preprocessing  │───▶│ Model (Factory)│───▶│ Predictor │
+  │ (postgre) │    │                │    │               │    │           │
+  └──────────┘    └────────────────┘    └──────────────┘    └─────┬─────┘
+                                                                  │
+                                                    ┌─────────────┼─────────────┐
+                                                    ▼             ▼             ▼
+                                              ┌──────────┐ ┌──────────┐ ┌────────────┐
+                                              │ Storage   │ │ Observer │ │  Console   │
+                                              │ (Postgres)│ │ (Subject)│ │  Logger    │
+                                              └──────────┘ └──────────┘ └────────────┘
+```
 
-- **`preprocessing`**:
-  - Cleans and normalizes raw price data.
-  - Creates features (returns, rolling averages, etc.) for models.
+### Components
 
-- **`model factory`** (Factory pattern):
-  - Central place to construct models by name (e.g. `"linear_regression"`, `"random_forest"`, `"lstm"`).
-  - Hides framework details (e.g. scikit-learn vs. PyTorch) behind a common interface.
-
-- **`prediction + observer`** (Observer pattern):
-  - When a prediction crosses a configured threshold (e.g. price change, confidence level),
-    the subject notifies its observers (e.g. console logger, email, webhook, etc.).
-
-- **`storage`**:
-  - Uses a simple repository layer to store:
-    - Raw data snapshots
-    - Model metadata
-    - Predictions and alerts
-  - Starts with **SQLite** (file-based, simple to run anywhere).
-  - Designed so you can swap to PostgreSQL later with minimal changes.
-
-- **`background runner`**:
-  - A loop / scheduler that:
-    1. Fetches fresh data.
-    2. Updates or trains models if needed.
-    3. Generates predictions.
-    4. Stores results and triggers alerts.
-  - Intended to run inside Docker (e.g. `docker run ...`).
+- **Fetcher (`provider/postgre.py`)** — Async data retrieval from Alpha Vantage via `httpx`, with results stored in PostgreSQL.
+- **Preprocessing** — Cleans and normalizes raw price data. Creates features (returns, rolling averages, etc.) for models.
+- **Model Factory** (Factory pattern) — Constructs models by name from `config/models.yaml`. Hides framework details (scikit-learn, PyTorch) behind a common `ModelInterface`.
+- **Observer** (Observer pattern) — When a prediction crosses a configured threshold, the subject notifies its observers. Starts with console logging; email/webhook observers can be added later alongside a web interface.
+- **Storage** — Repository layer backed by PostgreSQL (via SQLAlchemy) for raw data snapshots, model metadata, predictions, and alerts.
+- **Runner** — Background loop that fetches fresh data, runs predictions, stores results, and triggers alerts every 5 minutes.
 
 ---
 
-## Tech Stack (proposed)
+## Tech Stack
 
-- **Language**: Python 3.11+
-- **Core libraries** (planned, may evolve):
-  - `pandas` for data manipulation.
-  - `scikit-learn` for classical models (linear regression, random forest).
-  - (Optional later) `pytorch` or `tensorflow` / `keras` for LSTM.
-  - `aiohttp` or `httpx` for async HTTP requests.
-  - `SQLAlchemy` for database access (SQLite and PostgreSQL).
-  - `pydantic` (optional) for data validation / settings.
-- **Database**:
-  - Default: **SQLite** (local file, no extra services needed).
-  - Optional later: **PostgreSQL**, likely via a `docker-compose` setup.
-- **Container**:
-  - `Dockerfile` for building an image that:
-    - Installs dependencies.
-    - Copies project code.
-    - Runs a background loop entrypoint.
+| Category | Choice |
+|----------|--------|
+| Language | Python 3.11+ |
+| Data | `pandas`, `numpy` |
+| Classical ML | `scikit-learn` (linear regression, random forest) |
+| Deep learning | `PyTorch` (LSTM) |
+| HTTP | `httpx` (async, HTTP/2) |
+| Database | PostgreSQL via `SQLAlchemy` + `psycopg` |
+| Validation | `pydantic` |
+| Config | `pyyaml` |
+| Container | Docker + Docker Compose |
+| Data provider | Alpha Vantage |
 
 ---
 
-## Repository Structure (initial)
-
-Planned layout (subject to refinement as we build):
+## Repository Structure
 
 ```text
-design-pattern/
-  README.md
-  pyproject.toml   # Python dependencies (to be added)
-  Dockerfile                        # Container image definition (to be added)
-  src/
-    stock_pipeline/
-      __init__.py
-      config.py                     # Settings for APIs, DB, thresholds, etc.
-      data_fetcher.py               # Async fetching from Yahoo/Alpha Vantage
-      preprocessing.py              # Data cleaning & feature engineering
-      models/
-        __init__.py
-        factory.py                  # Factory pattern for model selection
-        base.py                     # Common model interface
-      observer.py                   # Observer pattern implementation
-      storage.py                    # DB connection + repositories
-      pipeline.py                   # Orchestrates fetch → preprocess → train → predict → store
-      runner.py                     # Background loop / CLI entrypoint
+stock-pipeline-lab/
+├── .container/
+│   └── Dockerfile                    # Container image definition
+├── config/
+│   └── models.yaml                   # Model definitions and hyperparameters
+├── src/
+│   └── pipeline/
+│       ├── __init__.py
+│       ├── config.py                 # Settings: API keys, DB URL, thresholds
+│       ├── preprocessing.py          # Data cleaning & feature engineering
+│       ├── observer.py               # Observer pattern implementation
+│       ├── pipeline.py               # Orchestrates fetch → preprocess → train → predict → store
+│       ├── runner.py                 # Background loop / CLI entrypoint
+│       ├── models/
+│       │   ├── __init__.py
+│       │   ├── factory.py            # Factory pattern for model selection
+│       │   └── model.py              # Common model interface
+│       └── provider/
+│           ├── __init__.py
+│           ├── postgre.py            # Alpha Vantage fetcher + PostgreSQL storage
+│           └── common/
+│               ├── __init__.py
+│               └── database.py       # Base DB connection and session management
+├── tests/
+├── docker-compose.yml                # Pipeline + PostgreSQL services
+├── pyproject.toml                    # Dependencies and project metadata
+├── Makefile                          # Build, run, and test shortcuts
+└── README.md
 ```
-
-At this stage, most modules are stubs with clear responsibilities and TODOs, so we can incrementally implement behavior.
 
 ---
 
-## Running the Project (planned)
+## Running the Project
 
-Until the core logic is implemented, commands will mostly be placeholders. The eventual flow will look like this:
+### Prerequisites
 
-### 1. Create and activate a virtual environment
+- Python 3.11+
+- Docker and Docker Compose
+- An [Alpha Vantage API key](https://www.alphavantage.co/support/#api-key)
+
+### 1. Clone and set up
 
 ```bash
+git clone https://github.com/alexpernea/stock-pipeline-lab.git
+cd stock-pipeline-lab
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -e ".[postgres,dev]"
 ```
 
-### 2. Install dependencies
+### 2. Configure environment
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your Alpha Vantage API key and database URL
 ```
 
 ### 3. Run the pipeline once
 
 ```bash
-python -m stock_pipeline.runner
+python -m pipeline.runner --mode oneshot
 ```
 
 This will:
-
-1. Load configuration.
-2. Fetch latest stock data.
+1. Load configuration and connect to PostgreSQL.
+2. Fetch latest stock data from Alpha Vantage.
 3. Preprocess data and prepare features.
 4. Train or load a model from the factory.
 5. Generate predictions and store them.
 6. Notify observers if thresholds are crossed.
 
-### 4. Run inside Docker
-
-Once the `Dockerfile` is fully set up:
+### 4. Run on a schedule
 
 ```bash
-docker build -t stock-pipeline .
-docker run --rm stock-pipeline
+python -m pipeline.runner --mode schedule
 ```
 
-In a later step, we can:
+Fetches data and runs predictions every 5 minutes.
 
-- Add environment variables for API keys and DB URLs.
-- Add a `docker-compose.yml` to run with PostgreSQL.
+### 5. Run with Docker Compose
+
+```bash
+docker compose up --build
+```
+
+This starts both PostgreSQL and the pipeline service. Pass your API key via `.env` or environment variables.
 
 ---
 
-## Design Patterns Overview
-
-### Observer Pattern
-
-- **Subject**:
-  - A prediction or alert manager that holds:
-    - Current predictions.
-    - A list of observers.
-  - When new predictions exceed some threshold (e.g. predicted daily return > 5%), it notifies observers.
-
-- **Observers**:
-  - Implement a common interface (e.g. `update(prediction_event)`):
-    - `ConsoleObserver` – log to stdout.
-    - `EmailObserver` – send an email (later).
-    - `WebhookObserver` – POST to a URL (later).
-
-The goal is to let you add/remove alert channels without changing the core prediction logic.
+## Design Patterns
 
 ### Factory Pattern
 
-- Central `ModelFactory` to create models given:
-  - A model name or identifier.
-  - Configuration (hyperparameters, etc.).
+`ModelFactory` creates models by name using definitions from `config/models.yaml`:
 
-Example mapping (to be implemented):
+| Key | Implementation |
+|-----|---------------|
+| `linear_regression` | scikit-learn `LinearRegression` |
+| `random_forest` | scikit-learn `RandomForestRegressor` |
+| `lstm` | PyTorch LSTM network |
 
-- `"linear_regression"` → scikit-learn `LinearRegression`.
-- `"random_forest"` → scikit-learn `RandomForestRegressor`.
-- `"lstm"` → PyTorch/TensorFlow model (later).
+All models implement `ModelInterface` with `train()` and `predict()` methods. Swap models by changing `default_model` in `models.yaml` — no pipeline code changes needed.
 
-This lets you swap models simply by changing configuration rather than editing pipeline code.
+### Observer Pattern
 
----
-
-## Background Execution
-
-The `runner` module will eventually:
-
-- Use `asyncio` or a simple loop with `time.sleep` to:
-  - Periodically fetch new data and run predictions.
-  - Persist results and emit alerts.
-- Be designed as a long-running process, ideal for running inside a Docker container.
-
-Possible modes (future work):
-
-- **oneshot**: run the full pipeline once and exit.
-- **schedule**: run every N minutes.
+- **Subject** — The prediction manager holds current predictions and a list of observers. When a prediction exceeds a threshold (e.g. predicted daily return > 5%), it notifies all observers.
+- **Observers** implement `update(prediction_event)`:
+  - `ConsoleObserver` — logs to stdout (current).
+  - `EmailObserver`, `WebhookObserver` — planned for later, alongside a web interface.
 
 ---
 
 ## Configuration & Secrets
 
-Planned approach:
+Environment variables loaded in `config.py`:
 
-- Use environment variables (e.g. `ALPHA_VANTAGE_API_KEY`, `DATABASE_URL`) loaded in `config.py`.
-- Provide a `.env.example` with non-secret defaults.
+| Variable | Description |
+|----------|-------------|
+| `ALPHA_VANTAGE_API_KEY` | API key for data fetching |
+| `DATABASE_URL` | PostgreSQL connection string |
+
+A `.env.example` file is provided with non-secret defaults.
 
 ---
 
-## Open Questions / Your Preferences
+## Roadmap
 
-To tailor the implementation to your preferences, please answer these when convenient:
+- [x] Project scaffold and pattern stubs
+- [x] Model configuration (`models.yaml`)
+- [ ] Implement `ModelInterface` and `ModelFactory`
+- [ ] Async data fetching from Alpha Vantage
+- [ ] Preprocessing and feature engineering
+- [ ] PostgreSQL storage layer
+- [ ] Observer pattern with console logging
+- [ ] Pipeline orchestration
+- [ ] Background runner with scheduling
+- [ ] Docker and Docker Compose setup
+- [ ] LSTM model implementation
+- [ ] Web interface for alerts and monitoring
 
-1. **Language**: Are you happy with **Python** for this project, or do you prefer another language (e.g. TypeScript/Node, Java, Go)?
-2. **ML stack**:
-   - Are you primarily interested in **classical models** (linear regression, random forest) with scikit-learn first, and add LSTM later?
-   - Or do you want LSTM / deep learning to be a first-class citizen from the beginning?
-3. **Database**:
-   - Do you want to start with **SQLite only**, or should we immediately integrate **PostgreSQL** via `docker-compose`?
-4. **Data provider**:
-   - Do you already have an **Alpha Vantage API key**, or should we start with **Yahoo Finance** (which may have fewer barriers to entry)?
-5. **Scheduling**:
-   - How often do you want the background pipeline to run (e.g. every 1 min, 5 min, 15 min, once per hour)?
-6. **Alert channels**:
-   - Initially, is **console logging** enough for alerts, or do you want email / webhooks wired from the start?
+---
 
-Once you confirm these, I’ll:
+## Contributing
 
-- Finalize the dependency list.
-- Add the project skeleton under `src/stock_pipeline/`.
-- Implement the Observer and Factory pattern scaffolding.
-- Add a functional `Dockerfile` and (optionally) `docker-compose.yml`.
+Contributions are welcome. Please open an issue first to discuss what you'd like to change.
 
+## License
+
+[MIT](LICENSE)
