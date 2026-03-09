@@ -1,7 +1,7 @@
 [project]
 name = "stock-price-prediction-pipeline"
 version = "0.1.0"
-description = "Stock price prediction pipeline using Observer & Factory patterns, async data fetching, and SQLite/PostgreSQL storage."
+description = "Stock price prediction pipeline using Observer & Factory patterns, async data fetching, and PostgreSQL storage."
 authors = [
   { name = "Alex Pernea", email = "apernea31@gmail.com" }
 ]
@@ -14,7 +14,6 @@ dependencies = [
   "numpy>=1.26",
   "scikit-learn>=1.4",
   "sqlalchemy>=2.0",
-  "aiosqlite>=0.20",
   "httpx[http2]>=0.27",
   "pydantic>=2.7",
   "pyyaml>=6.0",
@@ -23,6 +22,9 @@ dependencies = [
 [project.optional-dependencies]
 postgres = [
   "psycopg[binary]>=3.1",
+]
+lstm = [
+  "torch>=2.2",
 ]
 dev = [
   "pytest>=8.0",
