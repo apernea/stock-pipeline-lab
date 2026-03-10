@@ -93,7 +93,7 @@ class LSTMModel(ModelInterface):
             y_seq.append(y[i])
         return np.array(X_seq), np.array(y_seq)
 
-    def process(df) -> pd.DataFrame:
+    def process(self, df) -> pd.DataFrame:
         pass
 
     def train(self, X: np.ndarray, y: np.ndarray) -> None:
