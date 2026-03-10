@@ -6,6 +6,10 @@ class ModelInterface(ABC):
         pass
 
     @abstractmethod
+    def process(df):
+        raise NotImplementedError
+
+    @abstractmethod
     def train(self, X, y):
         raise NotImplementedError
 
