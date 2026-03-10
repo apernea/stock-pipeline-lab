@@ -9,7 +9,7 @@ A **stock price prediction pipeline** that demonstrates:
 - **Persistence** — store results in PostgreSQL.
 - **Containerization** — run the full pipeline inside Docker as a scheduled background service.
 
-> **Status:** Initial scaffold / skeleton — core structure and patterns set up, logic mostly stubbed.
+> **Status:** Core infrastructure complete — data fetching, storage, preprocessing, and LSTM model are implemented. Observer pattern, pipeline orchestration, and runner are the remaining pieces.
 
 ---
 
@@ -47,12 +47,12 @@ Alpha Vantage API
 
 ### Components
 
-- **Fetcher (`provider/postgre.py`)** — Async data retrieval from Alpha Vantage via `httpx`, with results stored in PostgreSQL.
-- **Preprocessing** — Cleans and normalizes raw price data. Creates features (returns, rolling averages, etc.) for models.
-- **Model Factory** (Factory pattern) — Constructs models by name from `config/models.yaml`. Hides framework details (scikit-learn, PyTorch) behind a common `ModelInterface`.
-- **Observer** (Observer pattern) — When a prediction crosses a configured threshold, the subject notifies its observers. Starts with console logging; email/webhook observers can be added later alongside a web interface.
-- **Storage** — Repository layer backed by PostgreSQL (via SQLAlchemy) for raw data snapshots, model metadata, predictions, and alerts.
-- **Runner** — Background loop that fetches fresh data, runs predictions, stores results, and triggers alerts every 5 minutes.
+- **APIProvider (`provider/api_provider.py`)** — Async Alpha Vantage client via `httpx`. Fetches daily OHLCV data and news sentiment, returning structured dicts ready for storage.
+- **PostgreSQLBackend (`provider/postgre.py`)** — Async insert/query layer over an `asyncpg` connection pool. Stores and retrieves stock data, sentiment data, and joined training sets.
+- **PreprocessingPipeline (`preprocessing/preprocessing.py`)** — Adds technical indicators (SMA, RSI, volatility, returns), shifts the target to next-day close, splits chronologically, and scales with `MinMaxScaler`.
+- **Model Factory** (Factory pattern) — `ModelFactory` looks up model classes by name from a generic `Registry`. All models implement `ModelInterface` (`train`, `predict`, `save`, `load`, `summary`). LSTM is fully implemented; linear regression and random forest are stubbed.
+- **Observer** (Observer pattern) — *Not yet implemented.* When a prediction crosses a configured threshold the subject will notify observers. Starts with console logging; email/webhook observers planned.
+- **Runner** — *Not yet implemented.* Background loop that fetches fresh data, runs predictions, stores results, and triggers alerts every 5 minutes.
 
 ---
 
@@ -65,9 +65,9 @@ Alpha Vantage API
 | Classical ML | `scikit-learn` (linear regression, random forest) |
 | Deep learning | `PyTorch` (LSTM) |
 | HTTP | `httpx` (async, HTTP/2) |
-| Database | PostgreSQL via `SQLAlchemy` + `psycopg` |
-| Validation | `pydantic` |
-| Config | `pyyaml` |
+| Database | PostgreSQL via `asyncpg` |
+| Validation | `pydantic` / `pydantic-settings` |
+| Config | `.env` via `pydantic-settings` |
 | Container | Docker + Docker Compose |
 | Data provider | Alpha Vantage |
 
@@ -78,33 +78,42 @@ Alpha Vantage API
 ```text
 stock-pipeline-lab/
 ├── .container/
-│   └── Dockerfile                    # Container image definition
+│   └── Dockerfile                        # Container image definition
 ├── config/
-│   └── models.yaml                   # Model definitions and hyperparameters
+│   └── models.yaml                       # Model hyperparameter definitions
 ├── src/
 │   └── pipeline/
-│       ├── __init__.py
-│       ├── config.py                 # Settings: API keys, DB URL, thresholds
-│       ├── preprocessing.py          # Data cleaning & feature engineering
-│       ├── observer.py               # Observer pattern implementation
-│       ├── pipeline.py               # Orchestrates fetch → preprocess → train → predict → store
-│       ├── runner.py                 # Background loop / CLI entrypoint
+│       ├── config.py                     # ✅ Settings via pydantic-settings (.env)
+│       ├── interfaces/
+│       │   ├── model.py                  # ✅ ModelInterface ABC (train/predict/save/load/summary)
+│       │   └── database.py               # ✅ DatabaseInterface ABC (connect/execute/fetch)
+│       ├── utils/
+│       │   └── registry.py               # ✅ Generic Registry for factory pattern
+│       ├── preprocessing/
+│       │   └── preprocessing.py          # ✅ PreprocessingPipeline (features, split, scaling)
 │       ├── models/
-│       │   ├── __init__.py
-│       │   ├── factory.py            # Factory pattern for model selection
-│       │   └── model.py              # Common model interface
-│       └── provider/
-│           ├── __init__.py
-│           ├── postgre.py            # Alpha Vantage fetcher + PostgreSQL storage
-│           └── common/
-│               ├── __init__.py
-│               └── database.py       # Base DB connection and session management
+│       │   ├── factory.py                # ✅ ModelFactory (Registry-backed, create/load)
+│       │   ├── lstm.py                   # ✅ LSTMModel (PyTorch, fully implemented)
+│       │   ├── linear_reg.py             # 🔲 LinearRegressionModel (stub)
+│       │   └── random_forest.py          # 🔲 RandomForestModel (stub)
+│       ├── provider/
+│       │   ├── api_provider.py           # ✅ APIProvider — Alpha Vantage (stock + sentiment)
+│       │   ├── postgre.py                # ✅ PostgreSQLBackend (insert/get stock & sentiment)
+│       │   └── common/
+│       │       └── database.py           # ✅ DatabaseProvider (asyncpg connection pool)
+│       ├── observer.py                   # 🔲 Observer pattern (not yet created)
+│       ├── pipeline.py                   # 🔲 Pipeline orchestration (not yet created)
+│       └── runner.py                     # 🔲 Background loop / CLI entrypoint (not yet created)
 ├── tests/
-├── docker-compose.yml                # Pipeline + PostgreSQL services
-├── pyproject.toml                    # Dependencies and project metadata
-├── Makefile                          # Build, run, and test shortcuts
+│   ├── test_api_provider.py              # ✅ Tests for APIProvider
+│   └── test_postgre.py                   # ✅ Tests for PostgreSQLBackend
+├── docker-compose.yml                    # Pipeline + PostgreSQL services
+├── pyproject.toml                        # Dependencies and project metadata
+├── Makefile                              # Build, run, and test shortcuts
 └── README.md
 ```
+
+**Legend:** ✅ Implemented &nbsp;|&nbsp; 🔲 Not yet implemented
 
 ---
 
@@ -169,15 +178,15 @@ This starts both PostgreSQL and the pipeline service. Pass your API key via `.en
 
 ### Factory Pattern
 
-`ModelFactory` creates models by name using definitions from `config/models.yaml`:
+`ModelFactory` resolves model classes from a generic `Registry`. Each model class self-registers via a `@model_registry.register(name)` decorator:
 
-| Key | Implementation |
-|-----|---------------|
-| `linear_regression` | scikit-learn `LinearRegression` |
-| `random_forest` | scikit-learn `RandomForestRegressor` |
-| `lstm` | PyTorch LSTM network |
+| Key | Implementation | Status |
+|-----|---------------|--------|
+| `lstm` | PyTorch LSTM (two stacked layers) | ✅ Implemented |
+| `linear_reg` | scikit-learn `LinearRegression` | 🔲 Stub |
+| `random_forest` | scikit-learn `RandomForestRegressor` | 🔲 Stub |
 
-All models implement `ModelInterface` with `train()` and `predict()` methods. Swap models by changing `default_model` in `models.yaml` — no pipeline code changes needed.
+All models implement `ModelInterface`: `train()`, `predict()`, `save()`, `load()`, `summary()`. Swap models by passing a different key to `ModelFactory.create()`.
 
 ### Observer Pattern
 
@@ -203,18 +212,40 @@ A `.env.example` file is provided with non-secret defaults.
 
 ## Roadmap
 
-- [x] Project scaffold and pattern stubs
-- [x] Model configuration (`models.yaml`)
-- [ ] Implement `ModelInterface` and `ModelFactory`
-- [ ] Async data fetching from Alpha Vantage
-- [ ] Preprocessing and feature engineering
-- [ ] PostgreSQL storage layer
-- [ ] Observer pattern with console logging
-- [ ] Pipeline orchestration
-- [ ] Background runner with scheduling
-- [ ] Docker and Docker Compose setup
-- [ ] LSTM model implementation
-- [ ] Web interface for alerts and monitoring
+### Done
+- [x] Project scaffold and configuration (`config.py`, `models.yaml`)
+- [x] `ModelInterface` and `ModelFactory` with generic `Registry`
+- [x] Async data fetching from Alpha Vantage (`APIProvider`)
+- [x] PostgreSQL storage layer — asyncpg pool + `PostgreSQLBackend`
+- [x] Preprocessing and feature engineering (`PreprocessingPipeline`)
+- [x] LSTM model — train, predict, save, load (PyTorch)
+- [x] Tests for API provider and PostgreSQL backend
+
+### Next Steps
+
+1. **Implement `LinearRegressionModel` and `RandomForestModel`** (`models/linear_reg.py`, `models/random_forest.py`)
+   Follow the same pattern as `LSTMModel`: use scikit-learn internally, pickle for save/load, register in `model_registry`.
+
+2. **Register models in the factory** (`models/__init__.py` or each model file)
+   Apply `@model_registry.register("linear_reg")` etc. so `ModelFactory.create()` works end-to-end.
+
+3. **Implement the Observer pattern** (`pipeline/observer.py`)
+   Create `Observer` ABC, `Subject` mixin, and a `ConsoleObserver`. The subject fires when a prediction crosses a configured threshold.
+
+4. **Implement pipeline orchestration** (`pipeline/pipeline.py`)
+   Wire together: `APIProvider` → `PostgreSQLBackend` → `PreprocessingPipeline` → `ModelFactory` → prediction → `Subject.notify()`.
+
+5. **Implement the background runner** (`pipeline/runner.py`)
+   CLI entrypoint with `--mode oneshot|schedule`. Use `asyncio` + `apscheduler` (or a simple sleep loop) for the 5-minute schedule.
+
+6. **Add DB schema / migrations**
+   The `stock_data` and `sentiment_data` tables are referenced in queries but no schema file or migration tool exists yet. Add an `init.sql` or Alembic setup.
+
+7. **Docker Compose wiring**
+   Ensure the pipeline service waits for PostgreSQL to be ready and passes `DATABASE_URL` / `API_KEY` from `.env`.
+
+8. **Expand test coverage**
+   Unit tests for `PreprocessingPipeline`, `LSTMModel`, and `ModelFactory`; integration tests against a test DB.
 
 ---
 
