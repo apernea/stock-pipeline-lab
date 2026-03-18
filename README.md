@@ -1,4 +1,4 @@
-# Stock Price Prediction Pipeline
+# StockLab
 
 An end-to-end stock prediction pipeline built around a rolling-window LSTM model, async data fetching, PostgreSQL persistence, and an observer-based alert system.
 
