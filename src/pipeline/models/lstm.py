@@ -28,6 +28,7 @@ class _LSTMNetwork(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.lstm2 = nn.LSTM(units, units // 2, batch_first=True)
         self.dropout2 = nn.Dropout(dropout)
+        self.leaky_relu = nn.LeakyReLU()
         self.fc = nn.Linear(units // 2, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
