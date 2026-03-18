@@ -19,6 +19,9 @@ dependencies = [
   "pyyaml>=6.0",
 ]
 
+[project.scripts]
+pipeline = "pipeline.runner:main"
+
 [project.optional-dependencies]
 postgres = [
   "asyncpg>=0.29",
@@ -31,6 +34,10 @@ dev = [
   "pytest-asyncio>=0.24",
   "black>=24.0",
   "ruff>=0.5",
+]
+all = [
+  "asyncpg>=0.29",
+  "torch>=2.2",
 ]
 
 [project.urls]

@@ -1,42 +1,59 @@
-.PHONY: install sync dev lint format test clean docker-build docker-up docker-down
+.PHONY: install sync lint format test migrate score run docker-build docker-up docker-down
 
-# Install the project in editable mode with all optional dependencies
+# ── Setup ────────────────────────────────────────────────────────────────────
+
+# Install everything (postgres + lstm + dev) and register the `pipeline` command
 install:
-	uv pip install -e ".[postgres,lstm,dev]"
+	uv sync --extra all --extra dev
 
-# Sync dependencies from pyproject.toml (fast, uses uv resolver)
-sync:
-	uv sync --all-extras
+# Install only core + dev (no torch/asyncpg) — faster for CI or non-ML work
+install-dev:
+	uv sync --extra dev
 
-# Install dev dependencies only
-dev:
-	uv pip install -e ".[dev]"
+# ── Quality ──────────────────────────────────────────────────────────────────
 
-# Run linter
 lint:
-	ruff check src/ tests/
+	uv run ruff check src/ tests/
 
-# Auto-format code
 format:
-	black src/ tests/
+	uv run black src/ tests/
 
-# Run tests
 test:
-	pytest tests/ -v
+	uv run pytest tests/ -v
 
-# Remove build artifacts and caches
-clean:
-	rm -rf build/ dist/ *.egg-info src/*.egg-info .pytest_cache .ruff_cache
-	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+# ── Pipeline ─────────────────────────────────────────────────────────────────
 
-# Build Docker image
+# Run the pipeline for one or more symbols (oneshot by default)
+#   make run SYMBOLS="IBM AAPL"
+#   make run SYMBOLS="IBM" MODE=schedule INTERVAL=300
+SYMBOLS          ?= IBM
+MODE             ?= oneshot
+INTERVAL         ?= 300
+MODEL            ?= lstm
+TRAINING_WINDOW  ?= 504
+
+run:
+	uv run pipeline $(SYMBOLS) --mode $(MODE) --interval $(INTERVAL) --model $(MODEL) --training-window $(TRAINING_WINDOW)
+
+# Force a full retrain then predict
+retrain:
+	uv run pipeline $(SYMBOLS) --force-retrain
+
+# Apply pending database migrations
+migrate:
+	uv run python scripts/migrate.py
+
+# Score unscored predictions against actual closes from stock_data
+score:
+	uv run python scripts/score_predictions.py
+
+# ── Docker ───────────────────────────────────────────────────────────────────
+
 docker-build:
 	docker build -f .container/Dockerfile -t stock-pipeline .
 
-# Start PostgreSQL
 docker-up:
 	docker compose -f .container/docker-compose.yml up -d
 
-# Stop all services
 docker-down:
 	docker compose -f .container/docker-compose.yml down

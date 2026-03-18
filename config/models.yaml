@@ -1,14 +1,1 @@
 default_model: linear_regression
-
-models:
-  linear_regression:
-    type: linear_regression
-    params:
-      fit_intercept: true
-
-  random_forest:
-    type: random_forest
-    params:
-      n_estimators: 100
-      max_depth: 5
-

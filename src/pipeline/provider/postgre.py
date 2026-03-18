@@ -16,6 +16,11 @@ class PostgreSQLBackend(DatabaseProvider):
     def __init__(self, credentials: DatabaseInterface.Credentials):
         super().__init__(credentials)
 
+    async def get_symbols(self) -> list[str]:
+        """Return all distinct ticker symbols present in stock_data."""
+        rows = await self.fetch("SELECT DISTINCT symbol FROM stock_data ORDER BY symbol")
+        return [r["symbol"] for r in rows]
+
     async def insert_stock_data(self, symbol: str, rows: list[dict]) -> int:
         """Bulk insert OHLCV rows into stock_data, skipping duplicates.
 
@@ -180,6 +185,102 @@ class PostgreSQLBackend(DatabaseProvider):
         df = pd.DataFrame(rows)
         df["date"] = pd.to_datetime(df["date"])
         df.set_index("date", inplace=True)
+        df.sort_index(ascending=True, inplace=True)
+        return df
+
+    async def insert_prediction(self, prediction: dict) -> int:
+        """Insert a single prediction row, skipping if it already exists.
+
+        Args:
+            prediction: Dict with keys:
+                symbol, model_name, model_version, prediction_date, target_date,
+                horizon_days, predicted_close, predicted_return, direction,
+                and optionally: confidence, lower_bound, upper_bound.
+
+        Returns:
+            1 if inserted, 0 if the row already existed (unique conflict).
+        """
+        query = """
+            INSERT INTO predictions (
+                symbol, model_name, model_version,
+                prediction_date, target_date, horizon_days,
+                predicted_close, predicted_return, direction,
+                confidence, lower_bound, upper_bound
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT ON CONSTRAINT uq_prediction DO NOTHING
+        """
+        result = await self.execute(
+            query,
+            prediction["symbol"],
+            prediction["model_name"],
+            prediction.get("model_version", "unknown"),
+            prediction["prediction_date"],
+            prediction["target_date"],
+            prediction.get("horizon_days", 1),
+            prediction["predicted_close"],
+            prediction["predicted_return"],
+            prediction["direction"],
+            prediction.get("confidence"),
+            prediction.get("lower_bound"),
+            prediction.get("upper_bound"),
+        )
+        return 1 if result == "INSERT 0 1" else 0
+
+    async def get_predictions(
+        self,
+        symbol: str,
+        model_name: str | None = None,
+        horizon_days: int = 1,
+        unscored_only: bool = False,
+        limit: int | None = None,
+    ) -> pd.DataFrame:
+        """Retrieve predictions for a symbol, ordered by target_date descending.
+
+        Args:
+            symbol: Ticker symbol.
+            model_name: Filter to a specific model. None returns all models.
+            horizon_days: Prediction horizon to filter on (default: 1).
+            unscored_only: If True, return only rows where actual_close is NULL.
+            limit: Maximum number of rows to return.
+
+        Returns:
+            DataFrame indexed by target_date with prediction and scoring columns.
+        """
+        conditions = ["symbol = $1", "horizon_days = $2"]
+        args: list = [symbol, horizon_days]
+
+        if model_name is not None:
+            args.append(model_name)
+            conditions.append(f"model_name = ${len(args)}")
+
+        if unscored_only:
+            conditions.append("actual_close IS NULL")
+
+        where = " AND ".join(conditions)
+        query = f"""
+            SELECT
+                target_date, prediction_date, model_name, model_version,
+                horizon_days, predicted_close, predicted_return, direction,
+                confidence, lower_bound, upper_bound,
+                actual_close, actual_return, mae, direction_correct,
+                created_at
+            FROM predictions
+            WHERE {where}
+            ORDER BY target_date DESC
+        """
+
+        if limit is not None:
+            args.append(limit)
+            query += f" LIMIT ${len(args)}"
+
+        rows = await self.fetch(query, *args)
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        df["target_date"] = pd.to_datetime(df["target_date"])
+        df.set_index("target_date", inplace=True)
         df.sort_index(ascending=True, inplace=True)
         return df
 
