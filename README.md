@@ -1,58 +1,98 @@
 # Stock Price Prediction Pipeline
 
-A **stock price prediction pipeline** that demonstrates:
-
-- **Observer pattern** — alert subscribers when predictions cross thresholds.
-- **Factory pattern** — swap between models (linear regression, random forest, LSTM) via configuration.
-- **Async data fetching** — pull price data from Alpha Vantage using `httpx`.
-- **Data pipeline** — fetch → preprocess → train → predict → store.
-- **Persistence** — store results in PostgreSQL.
-- **Containerization** — run the full pipeline inside Docker as a scheduled background service.
-
-> **Status:** Core infrastructure complete — data fetching, storage, preprocessing, and LSTM model are implemented. Observer pattern, pipeline orchestration, and runner are the remaining pieces.
+An end-to-end stock prediction pipeline built around a rolling-window LSTM model, async data fetching, PostgreSQL persistence, and an observer-based alert system.
 
 ---
 
-## Project Goals
+## What it does
 
-- **Educational:**
-  - Design a small but realistic ML pipeline end-to-end.
-  - Practice design patterns (Observer, Factory) in a real context.
-  - Structure a Python project that can grow over time.
-- **Operational:**
-  - Run the prediction loop on a **5-minute schedule** in the background.
-  - Package and run everything with **Docker Compose** (pipeline + PostgreSQL).
-  - Make it easy to add new models or alert channels without changing core logic.
+1. **Fetches** daily OHLCV prices and news sentiment from Alpha Vantage
+2. **Engineers** 20+ technical and sentiment features (MACD, Bollinger Bands, ATR, OBV, RSI, sentiment momentum, and more)
+3. **Trains** a stacked LSTM model on a configurable rolling window of recent trading days
+4. **Predicts** next-day close price, return %, and direction signal
+5. **Stores** predictions in PostgreSQL alongside actual closes once they're available
+6. **Scores** every prediction nightly — computing MAE and direction accuracy per model
+7. **Alerts** observers when predictions cross thresholds or direction flips
 
 ---
 
-## High-Level Architecture
+## Architecture
 
 ```
 Alpha Vantage API
        │
        ▼
-  ┌──────────┐    ┌────────────────┐    ┌──────────────┐    ┌───────────┐
-  │  Fetcher  │───▶│ Preprocessing  │───▶│ Model (Factory)│───▶│ Predictor │
-  │ (postgre) │    │                │    │               │    │           │
-  └──────────┘    └────────────────┘    └──────────────┘    └─────┬─────┘
-                                                                  │
-                                                    ┌─────────────┼─────────────┐
-                                                    ▼             ▼             ▼
-                                              ┌──────────┐ ┌──────────┐ ┌────────────┐
-                                              │ Storage   │ │ Observer │ │  Console   │
-                                              │ (Postgres)│ │ (Subject)│ │  Logger    │
-                                              └──────────┘ └──────────┘ └────────────┘
+  APIProvider (httpx, async)
+       │  stock + sentiment rows
+       ▼
+  PostgreSQLBackend (asyncpg pool)
+       │  get_training_data()
+       ▼
+  PreprocessingPipeline
+       │  scaled feature matrix (rolling window)
+       ▼
+  LSTMModel (PyTorch)
+       │  predicted_close, predicted_return, direction
+       ▼
+  PostgreSQLBackend.insert_prediction()
+       │
+       ▼
+  Subject.notify(PredictionEvent)
+       ├── ConsoleObserver       → structured log line
+       ├── ThresholdObserver     → warning when |return| ≥ threshold
+       └── DirectionChangeObserver → warning on direction flip
+
+  [nightly] score_predictions.py
+       └── fills actual_close, mae, direction_correct from stock_data
 ```
 
-### Components
+---
 
-- **APIProvider (`provider/api_provider.py`)** — Async Alpha Vantage client via `httpx`. Fetches daily OHLCV data and news sentiment, returning structured dicts ready for storage.
-- **PostgreSQLBackend (`provider/postgre.py`)** — Async insert/query layer over an `asyncpg` connection pool. Stores and retrieves stock data, sentiment data, and joined training sets.
-- **PreprocessingPipeline (`preprocessing/preprocessing.py`)** — Adds technical indicators (SMA, RSI, volatility, returns), shifts the target to next-day close, splits chronologically, and scales with `MinMaxScaler`.
-- **Model Factory** (Factory pattern) — `ModelFactory` looks up model classes by name from a generic `Registry`. All models implement `ModelInterface` (`train`, `predict`, `save`, `load`, `summary`). LSTM is fully implemented; linear regression and random forest are stubbed.
-- **Observer** (Observer pattern) — *Not yet implemented.* When a prediction crosses a configured threshold the subject will notify observers. Starts with console logging; email/webhook observers planned.
-- **Runner** — *Not yet implemented.* Background loop that fetches fresh data, runs predictions, stores results, and triggers alerts every 5 minutes.
+## Repository Structure
+
+```text
+stocklab/
+├── .container/
+│   ├── Dockerfile                        # (empty — not yet containerised)
+│   └── docker-compose.yml                # PostgreSQL service
+├── config/
+│   └── models.yaml                       # default_model setting
+├── migrations/
+│   ├── 001_create_stock_data.sql
+│   ├── 002_create_sentiment_data.sql
+│   └── 003_create_predictions.sql        # predictions + auto-scoring trigger
+├── scripts/
+│   ├── migrate.py                        # idempotent SQL migration runner
+│   └── score_predictions.py             # nightly actual-vs-predicted scorer
+├── src/pipeline/
+│   ├── config.py                         # pydantic-settings (.env loader)
+│   ├── observer.py                       # Observer ABC, Subject, 3 concrete observers
+│   ├── pipeline.py                       # StockPipeline — full orchestration + rolling window
+│   ├── runner.py                         # CLI entry point (oneshot / schedule modes)
+│   ├── interfaces/
+│   │   ├── model.py                      # ModelInterface ABC
+│   │   └── database.py                   # DatabaseInterface ABC
+│   ├── models/
+│   │   ├── factory.py                    # ModelFactory + ModelType constants
+│   │   ├── lstm.py                       # LSTMModel (PyTorch, fully implemented)
+│   │   ├── linear_reg.py                 # stub
+│   │   └── random_forest.py              # stub
+│   ├── preprocessing/
+│   │   └── preprocessing.py             # PreprocessingPipeline (20+ features)
+│   ├── provider/
+│   │   ├── api_provider.py               # Alpha Vantage client (stock + sentiment)
+│   │   ├── postgre.py                    # PostgreSQLBackend (CRUD for all tables)
+│   │   ├── fetcher.py                    # standalone fetch-and-store helper
+│   │   └── common/database.py            # DatabaseProvider (asyncpg pool)
+│   └── utils/
+│       └── registry.py                   # generic Registry for factory pattern
+├── tests/
+│   ├── test_api_provider.py
+│   └── test_postgre.py
+├── pyproject.toml
+├── Makefile
+└── .env.example
+```
 
 ---
 
@@ -61,197 +101,153 @@ Alpha Vantage API
 | Category | Choice |
 |----------|--------|
 | Language | Python 3.11+ |
+| Package manager | `uv` |
 | Data | `pandas`, `numpy` |
-| Classical ML | `scikit-learn` (linear regression, random forest) |
 | Deep learning | `PyTorch` (LSTM) |
+| ML utilities | `scikit-learn` (preprocessing, scalers) |
 | HTTP | `httpx` (async, HTTP/2) |
 | Database | PostgreSQL via `asyncpg` |
-| Validation | `pydantic` / `pydantic-settings` |
-| Config | `.env` via `pydantic-settings` |
+| Config | `pydantic-settings` + `.env` |
+| Data source | Alpha Vantage |
 | Container | Docker + Docker Compose |
-| Data provider | Alpha Vantage |
 
 ---
 
-## Repository Structure
-
-```text
-stock-pipeline-lab/
-├── .container/
-│   └── Dockerfile                        # Container image definition
-├── config/
-│   └── models.yaml                       # Model hyperparameter definitions
-├── src/
-│   └── pipeline/
-│       ├── config.py                     # ✅ Settings via pydantic-settings (.env)
-│       ├── interfaces/
-│       │   ├── model.py                  # ✅ ModelInterface ABC (train/predict/save/load/summary)
-│       │   └── database.py               # ✅ DatabaseInterface ABC (connect/execute/fetch)
-│       ├── utils/
-│       │   └── registry.py               # ✅ Generic Registry for factory pattern
-│       ├── preprocessing/
-│       │   └── preprocessing.py          # ✅ PreprocessingPipeline (features, split, scaling)
-│       ├── models/
-│       │   ├── factory.py                # ✅ ModelFactory (Registry-backed, create/load)
-│       │   ├── lstm.py                   # ✅ LSTMModel (PyTorch, fully implemented)
-│       │   ├── linear_reg.py             # 🔲 LinearRegressionModel (stub)
-│       │   └── random_forest.py          # 🔲 RandomForestModel (stub)
-│       ├── provider/
-│       │   ├── api_provider.py           # ✅ APIProvider — Alpha Vantage (stock + sentiment)
-│       │   ├── postgre.py                # ✅ PostgreSQLBackend (insert/get stock & sentiment)
-│       │   └── common/
-│       │       └── database.py           # ✅ DatabaseProvider (asyncpg connection pool)
-│       ├── observer.py                   # 🔲 Observer pattern (not yet created)
-│       ├── pipeline.py                   # 🔲 Pipeline orchestration (not yet created)
-│       └── runner.py                     # 🔲 Background loop / CLI entrypoint (not yet created)
-├── tests/
-│   ├── test_api_provider.py              # ✅ Tests for APIProvider
-│   └── test_postgre.py                   # ✅ Tests for PostgreSQLBackend
-├── docker-compose.yml                    # Pipeline + PostgreSQL services
-├── pyproject.toml                        # Dependencies and project metadata
-├── Makefile                              # Build, run, and test shortcuts
-└── README.md
-```
-
-**Legend:** ✅ Implemented &nbsp;|&nbsp; 🔲 Not yet implemented
-
----
-
-## Running the Project
+## Getting Started
 
 ### Prerequisites
 
 - Python 3.11+
-- Docker and Docker Compose
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
+- Docker (for PostgreSQL)
 - An [Alpha Vantage API key](https://www.alphavantage.co/support/#api-key)
 
-### 1. Clone and set up
+### 1. Install dependencies
 
 ```bash
-git clone https://github.com/alexpernea/stock-pipeline-lab.git
-cd stock-pipeline-lab
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e ".[postgres,dev]"
+git clone https://github.com/alexpernea/stocklab.git
+cd stocklab
+make install
 ```
+
+This runs `uv sync --extra all --extra dev`, which installs all dependencies (including PyTorch and asyncpg) and registers the `pipeline` CLI command.
 
 ### 2. Configure environment
 
 ```bash
 cp .env.example .env
-# Edit .env with your Alpha Vantage API key and database URL
+# Fill in DATABASE_URL and API_KEY
 ```
 
-### 3. Run the pipeline once
+### 3. Start PostgreSQL
 
 ```bash
-python -m pipeline.runner --mode oneshot
+make docker-up
 ```
 
-This will:
-1. Load configuration and connect to PostgreSQL.
-2. Fetch latest stock data from Alpha Vantage.
-3. Preprocess data and prepare features.
-4. Train or load a model from the factory.
-5. Generate predictions and store them.
-6. Notify observers if thresholds are crossed.
-
-### 4. Run on a schedule
+### 4. Run migrations
 
 ```bash
-python -m pipeline.runner --mode schedule
+make migrate
 ```
 
-Fetches data and runs predictions every 5 minutes.
-
-### 5. Run with Docker Compose
+### 5. Run the pipeline
 
 ```bash
-docker compose up --build
+# Fetch, train, and predict for IBM (oneshot)
+make run SYMBOLS=IBM
+
+# Multiple symbols
+make run SYMBOLS="IBM AAPL MSFT"
+
+# Schedule mode — re-runs every 5 minutes
+make run SYMBOLS=IBM MODE=schedule
+
+# Force retrain even if a model is already saved
+make retrain SYMBOLS=IBM
+
+# Or call the CLI directly
+uv run pipeline IBM AAPL --mode schedule --interval 300 --alert-threshold 0.03
 ```
 
-This starts both PostgreSQL and the pipeline service. Pass your API key via `.env` or environment variables.
+### 6. Score predictions (run after market close)
+
+```bash
+make score
+```
+
+Fills `actual_close`, `actual_return`, `mae`, and `direction_correct` for any predictions whose `target_date` has passed.
 
 ---
 
-## Design Patterns
+## Features Engineered
 
-### Factory Pattern
-
-`ModelFactory` resolves model classes from a generic `Registry`. Each model class self-registers via a `@model_registry.register(name)` decorator:
-
-| Key | Implementation | Status |
-|-----|---------------|--------|
-| `lstm` | PyTorch LSTM (two stacked layers) | ✅ Implemented |
-| `linear_reg` | scikit-learn `LinearRegression` | 🔲 Stub |
-| `random_forest` | scikit-learn `RandomForestRegressor` | 🔲 Stub |
-
-All models implement `ModelInterface`: `train()`, `predict()`, `save()`, `load()`, `summary()`. Swap models by passing a different key to `ModelFactory.create()`.
-
-### Observer Pattern
-
-- **Subject** — The prediction manager holds current predictions and a list of observers. When a prediction exceeds a threshold (e.g. predicted daily return > 5%), it notifies all observers.
-- **Observers** implement `update(prediction_event)`:
-  - `ConsoleObserver` — logs to stdout (current).
-  - `EmailObserver`, `WebhookObserver` — planned for later, alongside a web interface.
+| Group | Features |
+|-------|----------|
+| Price structure | `log_return`, `daily_range`, `price_position`, `gap` |
+| Moving averages | `sma_5`, `sma_20`, `ema_12`, `ema_20` |
+| MACD | `macd`, `macd_signal`, `macd_histogram` |
+| Bollinger Bands | `bb_upper`, `bb_lower`, `bb_pct_b`, `bb_bandwidth` |
+| Momentum | `rsi_14`, `roc_10`, `close_lag_24` |
+| Volatility | `atr_14`, `volatility_20` |
+| Volume | `obv`, `volume_ratio_20` |
+| Sentiment | `avg_sentiment`, `article_count`, `sentiment_std`, `avg_relevance`, `sentiment_momentum`, `sentiment_dispersion` |
 
 ---
 
-## Configuration & Secrets
+## Rolling Window Training
 
-Environment variables loaded in `config.py`:
+The model always trains on the most recent `--training-window` trading days (default: 504 ≈ 2 years). When new data is fetched, the window slides forward automatically — the oldest rows fall off and the newest are included. Retraining only triggers when the latest date in `stock_data` is ahead of the model's recorded training cutoff.
 
-| Variable | Description |
-|----------|-------------|
-| `ALPHA_VANTAGE_API_KEY` | API key for data fetching |
-| `DATABASE_URL` | PostgreSQL connection string |
-
-A `.env.example` file is provided with non-secret defaults.
+```bash
+make run SYMBOLS=IBM TRAINING_WINDOW=252   # 1-year window
+make run SYMBOLS=IBM TRAINING_WINDOW=0     # all available data
+```
 
 ---
 
-## Roadmap
+## Observer Pattern
 
-### Done
-- [x] Project scaffold and configuration (`config.py`, `models.yaml`)
-- [x] `ModelInterface` and `ModelFactory` with generic `Registry`
-- [x] Async data fetching from Alpha Vantage (`APIProvider`)
-- [x] PostgreSQL storage layer — asyncpg pool + `PostgreSQLBackend`
-- [x] Preprocessing and feature engineering (`PreprocessingPipeline`)
-- [x] LSTM model — train, predict, save, load (PyTorch)
-- [x] Tests for API provider and PostgreSQL backend
+`StockPipeline` extends `Subject`. After every prediction, it fires a `PredictionEvent` to all attached observers:
 
-### Next Steps
+| Observer | Behaviour |
+|----------|-----------|
+| `ConsoleObserver` | Logs every prediction with direction arrow and return % |
+| `ThresholdObserver` | `WARNING` when `\|predicted_return\|` ≥ threshold |
+| `DirectionChangeObserver` | `WARNING` when direction flips from previous run |
 
-1. **Implement `LinearRegressionModel` and `RandomForestModel`** (`models/linear_reg.py`, `models/random_forest.py`)
-   Follow the same pattern as `LSTMModel`: use scikit-learn internally, pickle for save/load, register in `model_registry`.
-
-2. **Register models in the factory** (`models/__init__.py` or each model file)
-   Apply `@model_registry.register("linear_reg")` etc. so `ModelFactory.create()` works end-to-end.
-
-3. **Implement the Observer pattern** (`pipeline/observer.py`)
-   Create `Observer` ABC, `Subject` mixin, and a `ConsoleObserver`. The subject fires when a prediction crosses a configured threshold.
-
-4. **Implement pipeline orchestration** (`pipeline/pipeline.py`)
-   Wire together: `APIProvider` → `PostgreSQLBackend` → `PreprocessingPipeline` → `ModelFactory` → prediction → `Subject.notify()`.
-
-5. **Implement the background runner** (`pipeline/runner.py`)
-   CLI entrypoint with `--mode oneshot|schedule`. Use `asyncio` + `apscheduler` (or a simple sleep loop) for the 5-minute schedule.
-
-6. **Add DB schema / migrations**
-   The `stock_data` and `sentiment_data` tables are referenced in queries but no schema file or migration tool exists yet. Add an `init.sql` or Alembic setup.
-
-7. **Docker Compose wiring**
-   Ensure the pipeline service waits for PostgreSQL to be ready and passes `DATABASE_URL` / `API_KEY` from `.env`.
-
-8. **Expand test coverage**
-   Unit tests for `PreprocessingPipeline`, `LSTMModel`, and `ModelFactory`; integration tests against a test DB.
+Adding a new alert channel (email, Slack, webhook) is a new class that implements `Observer.update()` — no changes to the pipeline.
 
 ---
 
-## Contributing
+## Makefile Reference
 
-Contributions are welcome. Please open an issue first to discuss what you'd like to change.
+| Target | What it does |
+|--------|-------------|
+| `make install` | `uv sync --extra all --extra dev` |
+| `make run SYMBOLS=...` | Run the pipeline (oneshot by default) |
+| `make retrain SYMBOLS=...` | Force full retrain then predict |
+| `make migrate` | Apply pending SQL migrations |
+| `make score` | Score unscored predictions against actuals |
+| `make test` | Run the test suite |
+| `make lint` | `ruff check` |
+| `make format` | `black` |
+| `make docker-up` | Start PostgreSQL container |
+| `make docker-down` | Stop containers |
+
+---
+
+## Predictions Schema
+
+Each prediction stores:
+
+- `predicted_close`, `predicted_return`, `direction` — model outputs
+- `confidence`, `lower_bound`, `upper_bound` — optional uncertainty fields
+- `actual_close`, `actual_return` — filled nightly by the scoring job
+- `mae`, `direction_correct` — auto-computed by a DB trigger when actuals land
+- `model_name`, `model_version`, `horizon_days` — for multi-model, multi-horizon support
+
+---
 
 ## License
 
