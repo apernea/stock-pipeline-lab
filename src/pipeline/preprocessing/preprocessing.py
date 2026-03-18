@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
+import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 
 
@@ -52,28 +52,55 @@ class PreprocessingPipeline:
         """
         df = df.copy()
 
-        # Daily return
-        df["daily_return"] = df["close"].pct_change()
+        # --- Lagged price ---
+        df["close_lag_24"] = df["close"].shift(24)
 
-        # Log return
+        # --- Returns ---
         df["log_return"] = np.log(df["close"] / df["close"].shift(1))
 
-        # Simple moving averages
+        # --- Price structure ---
+        df["daily_range"] = (df["high"] - df["low"]) / df["close"]
+        hl_range = df["high"] - df["low"]
+        df["price_position"] = (df["close"] - df["low"]) / hl_range.where(hl_range != 0, np.nan)
+        df["gap"] = (df["open"] - df["close"].shift(1)) / df["close"].shift(1)
+
+        # --- Moving averages ---
         df["sma_5"] = df["close"].rolling(window=5).mean()
         df["sma_20"] = df["close"].rolling(window=20).mean()
+        df["ema_12"] = df["close"].ewm(span=12, adjust=False).mean()
+        df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
+        ema_26 = df["close"].ewm(span=26, adjust=False).mean()
 
-        # MA crossover ratio — how far the short MA is from the long MA
-        df["ma_ratio"] = df["sma_5"] / df["sma_20"]
+        # --- MACD ---
+        df["macd"] = df["ema_12"] - ema_26
+        df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
+        df["macd_histogram"] = df["macd"] - df["macd_signal"]
 
-        # Rolling volatility (std of daily returns)
-        df["volatility_5"] = df["daily_return"].rolling(window=5).std()
-        df["volatility_20"] = df["daily_return"].rolling(window=20).std()
+        # --- Bollinger Bands ---
+        std_20 = df["close"].rolling(window=20).std()
+        df["bb_upper"] = df["sma_20"] + 2 * std_20
+        df["bb_lower"] = df["sma_20"] - 2 * std_20
+        bb_range = df["bb_upper"] - df["bb_lower"]
+        df["bb_pct_b"] = (df["close"] - df["bb_lower"]) / bb_range.where(bb_range != 0, np.nan)
+        df["bb_bandwidth"] = bb_range / df["sma_20"]
 
-        # Volume percent change
-        df["volume_change"] = df["volume"].pct_change()
-
-        # RSI (14-day)
+        # --- Momentum ---
         df["rsi_14"] = PreprocessingPipeline._compute_rsi(df["close"], period=14)
+        df["roc_10"] = df["close"].pct_change(periods=10)
+
+        # --- Volatility ---
+        df["atr_14"] = PreprocessingPipeline._compute_atr(df, period=14)
+        df["volatility_20"] = df["log_return"].rolling(window=20).std()
+
+        # --- Volume ---
+        df["obv"] = PreprocessingPipeline._compute_obv(df)
+        vol_ma_20 = df["volume"].rolling(window=20).mean()
+        df["volume_ratio_20"] = df["volume"] / vol_ma_20.where(vol_ma_20 != 0, np.nan)
+
+        # --- Sentiment-derived ---
+        if "avg_sentiment" in df.columns:
+            df["sentiment_momentum"] = df["avg_sentiment"].rolling(window=3).mean()
+            df["sentiment_dispersion"] = df["sentiment_std"].rolling(window=3).mean()
 
         return df
 
@@ -149,3 +176,23 @@ class PreprocessingPipeline:
         loss = (-delta.where(delta < 0, 0.0)).rolling(window=period).mean()
         rs = gain / loss
         return 100 - (100 / (1 + rs))
+
+    @staticmethod
+    def _compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Compute Average True Range — measures volatility across high/low/close."""
+        prev_close = df["close"].shift(1)
+        true_range = pd.concat(
+            [
+                df["high"] - df["low"],
+                (df["high"] - prev_close).abs(),
+                (df["low"] - prev_close).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        return true_range.rolling(window=period).mean()
+
+    @staticmethod
+    def _compute_obv(df: pd.DataFrame) -> pd.Series:
+        """Compute On-Balance Volume — volume accumulates in price direction."""
+        direction = np.sign(df["close"].diff()).fillna(0)
+        return (direction * df["volume"]).cumsum()
