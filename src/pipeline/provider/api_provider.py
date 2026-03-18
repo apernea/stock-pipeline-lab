@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 
@@ -39,6 +40,7 @@ class APIProvider:
         if "Information" in data:
             raise ValueError(f"API limit: {data['Information']}")
 
+        await asyncio.sleep(1.2)
         return data
 
     async def fetch_stock_data(
