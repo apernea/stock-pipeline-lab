@@ -1,6 +1,5 @@
 """LSTM model for next-day stock close price prediction using PyTorch."""
 
-from pipeline.interfaces import ModelInterface
 from __future__ import annotations
 
 import logging
@@ -9,6 +8,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from pipeline.interfaces import ModelInterface
+from pipeline.models.factory import ModelType, model_registry
 
 try:
     import torch
@@ -39,6 +41,7 @@ class _LSTMNetwork(nn.Module):
         return self.fc(x)
 
 
+@model_registry.register(ModelType.LSTM)
 class LSTMModel(ModelInterface):
     """LSTM neural network for stock price prediction.
 
